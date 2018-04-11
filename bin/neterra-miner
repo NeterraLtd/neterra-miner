@@ -1,0 +1,177 @@
+#!/usr/bin/env node
+
+"use strict"
+const vorpal = require('vorpal')();
+const async = require('async');
+const path = require('path');
+const pm2 = require('pm2');
+
+const pretty_cli = require('./../lib/cli/pretty-cli');
+const configuration = require('./../lib/cli/configuration');
+const tables = require('./../lib/cli/tables');
+const config = require('./../lib/config');
+const Neterra_Miner = require('../lib/server/neterra_miner');
+
+var miner_global = new Neterra_Miner(config, true)
+
+var server_config = config.server.get()
+var cmd = {}
+
+const isRigRegistered = function(){
+  var conf = config.server.get()
+  if (!conf.rig_id || !conf.name || !conf.email || !conf.group){
+    return false
+  }else{
+    return true
+  }
+}
+
+
+const logBus = function(){
+  pm2.disconnect()
+  pm2.connect(function(){
+    pm2.launchBus(function(err, bus) {
+      bus.on('log:*', function(type, packet) {
+        if (packet.process.name.indexOf('neterra_miner_') >= 0){
+          var data = {
+            id: packet.process.pm_id,
+            name: packet.process.name,
+            time: packet.at,
+            data: packet.data
+          }
+          vorpal.log(data.data)
+        }
+      })
+    })
+  })
+}
+
+
+vorpal.delimiter(pretty_cli.chalk.cyan(`[#][neterra-miner]`))
+
+cmd.configs_list = vorpal.command('list configs', 'List coins.')
+cmd.configs_list.action(function(args, callback) {
+  var this_cmd = this
+  miner_global.configs.list()
+  if (callback) callback()
+})
+
+cmd.processes_list = vorpal.command('list processes', 'List coins.')
+cmd.processes_list.action(function(args, callback) {
+  var this_cmd = this
+  miner_global.processes.list(function(err, configs){
+    this_cmd.log(tables.processes2table(configs).toString())
+    if (callback) callback()
+  })
+})
+
+cmd.start = vorpal.command('start <config_name>', 'Start mining coin.')
+cmd.start.action(function(args, callback) {
+  var this_cmd = this
+
+  miner_global.processes.start(args.config_name, function(err){
+    if (err){
+      this_cmd.log(err)
+      if (callback) return callback()
+    }
+    this_cmd.log('Starting mining process...')
+    miner_global.processes.list(function(err, configs){
+      this_cmd.log(tables.processes2table(configs).toString())
+      logBus()
+      if (callback) callback()
+    })
+  })
+
+})
+
+cmd.stop = vorpal.command('stop <process_name>', 'Stop mining coin.')
+cmd.stop.action(function(args, callback) {
+  var this_cmd = this
+
+  miner_global.processes.stop(args.process_name, function(err){
+    if (err){
+      this_cmd.log(err)
+      if (callback) return callback()
+    }
+    this_cmd.log('Stoping mining process...')
+    miner_global.processes.list(function(err, configs){
+      this_cmd.log(tables.processes2table(configs).toString())
+      logBus()
+      if (callback) callback()
+    })
+  })
+})
+
+cmd.connect = vorpal.command('connect', 'Connect to Neterra-Miner')
+cmd.connect.action(function(args, callback) {
+  var this_cmd = this
+  miner_global.neterra_smart_miner.connect(function(err, msg){
+    this_cmd.log(msg)
+    logBus()
+    if (callback) callback()
+  })
+})
+
+cmd.disconnect = vorpal.command('disconnect', 'Disconnect to Neterra-Miner')
+cmd.disconnect.action(function(args, callback) {
+  var this_cmd = this
+  miner_global.neterra_smart_miner.disconnect(function(err, msg){
+    this_cmd.log(msg)
+    logBus()
+    if (callback) callback()
+  })
+})
+
+cmd.config = vorpal.command('config', 'RIG Configuration')
+cmd.config.action(function(args, callback) {
+  var this_cmd = this
+  configuration(this_cmd, function(result){
+    result.smart = config.defaults.get().smart
+    config.server.set(result)
+    miner_global.neterra_smart_miner.emit('registration', result)
+    logBus()
+    if (callback) callback()
+  })
+})
+
+
+
+vorpal.log(pretty_cli.chalk.blue(pretty_cli.get_logo()))
+vorpal.show();
+
+
+//Events
+
+logBus()
+
+miner_global.on('error', function(err){
+  vorpal.log(`Error: ${err}`)
+})
+
+miner_global.on('registration:error', function(err, data){
+  vorpal.log(`Registration error: ${err}`)
+  vorpal.log('Please execute command "config" to reinitialize the configuration process.')
+})
+
+miner_global.on('registration:id', function(err, data){
+  if (err) return vorpal.log(`Error: ${err}`)
+  var new_server_config = config.server.get()
+  new_server_config.rig_id = data.id
+  config.server.set(new_server_config)
+  vorpal.log('Registration complete.')
+})
+
+miner_global.on('configs:list', function(err, configs){
+  if (err) return vorpal.log(`Error: ${err}`)
+  vorpal.log(tables.configs2table(configs).toString())
+})
+
+
+if (!isRigRegistered()){
+  vorpal.log('Starting for first time.\nConfiguration initialized...')
+  vorpal.exec('connect').then(function(data){
+    vorpal.exec('config')
+  })
+}else{
+  vorpal.exec('connect')
+}

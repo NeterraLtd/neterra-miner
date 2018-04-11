@@ -1,0 +1,14 @@
+[
+  {
+    "name": "claymore-eth",
+    "version": "11.5.0",
+    "variables":[
+      "GPU_FORCE_64BIT_PTR=1",
+      "GPU_MAX_HEAP_SIZE=100",
+      "GPU_USE_SYNC_OBJECTS=1",
+      "GPU_MAX_ALLOC_PERCENT=100",
+      "GPU_SINGLE_ALLOC_PERCENT=100"
+    ],
+    "location": "/opt/miners/claymore-dual-v11.5/ethdcrminer64"
+  }
+]
